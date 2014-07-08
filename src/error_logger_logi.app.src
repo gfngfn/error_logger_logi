@@ -1,0 +1,14 @@
+%%  vim: set ft=erlang : -*- erlang -*- 
+{application, error_logger_logi,
+ [
+  {description, "An error_logger backend for redirecting events into logi"},
+  {vsn, git},
+  {registered, [error_logger_logi_sup]},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  logi
+                 ]},
+  {mod, { error_logger_logi_app, []}},
+  {env, []}
+ ]}.
