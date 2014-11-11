@@ -2,6 +2,8 @@
 %%
 %% @doc error_logger handler
 %% @private
+%%
+%% TODO: refactoring
 -module(error_logger_logi_h).
 
 -behaviour(gen_event).
@@ -12,14 +14,22 @@
 -export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2, code_change/3]).
 
 %%------------------------------------------------------------------------------------------------------------------------
+%% Internal API
+%%------------------------------------------------------------------------------------------------------------------------
+-export([do_log/2]).
+
+%%------------------------------------------------------------------------------------------------------------------------
 %% Macros & Records
 %%------------------------------------------------------------------------------------------------------------------------
 -define(MAX_DEPTH, 16).
--define(MAX_QUEUE_LEN, 8).
+-define(MAX_WRITERS, 100).
+-define(WRITE_TIMEOUT, 1000).
+-define(WARNING_LOG_FREQUENCY, {frequency, {interval, 60 * 1000}}).
 
 -record(state,
         {
-          logger :: logi:logger()
+          logger       :: logi:logger(),
+          writers  = 0 :: non_neg_integer()
         }).
 
 %%------------------------------------------------------------------------------------------------------------------------
@@ -32,21 +42,32 @@ init([Logger]) ->
 
 %% @hidden
 handle_event(Event, State) ->
-    {_, Len} = erlang:process_info(self(), message_queue_len),
-    _ = case Len > ?MAX_QUEUE_LEN of
-            false -> do_log(Event, State);
-            true  -> logi:warning_opt("overload: queue_len=~p", [Len], [{frequency, {interval, 3 * 60 * 1000}}])
-        end,
-    {ok, State}.
+    case State#state.writers =< ?MAX_WRITERS of
+        false ->
+            {_, Len} = erlang:process_info(self(), message_queue_len),
+            _ = logi:warning_opt("overload: queue_len=~w, workers=~w", [Len, State#state.writers], [?WARNING_LOG_FREQUENCY]),
+            {ok, State};
+        true ->
+            ok = start_writer(Event, State),
+            {ok, State#state{writers = State#state.writers + 1}}
+    end.
 
 %% @hidden
 handle_call(Request, State) ->
-    _ = logi:warning_opt(State#state.logger, "unknown call: request=~p", [Request], [{frequency, {interval, 60 * 1000}}]),
+    _ = logi:warning_opt(State#state.logger, "unknown call: request=~W", [Request, ?MAX_WRITERS], [?WARNING_LOG_FREQUENCY]),
     {ok, undefined, State}.
 
 %% @hidden
+handle_info({?MODULE, timeout, Pid}, State) ->
+    _ = case erlang:is_process_alive(Pid) of
+            false -> ok;
+            true  ->
+                _ = exit(Pid, kill),
+                logi:warning_opt(State#state.logger, "log write timeout: writer=~p", [Pid], [?WARNING_LOG_FREQUENCY])
+        end,
+    {ok, State#state{writers = State#state.writers - 1}};
 handle_info(Info, State) ->
-    _ = logi:warning_opt(State#state.logger, "unknown info: info=~p", [Info], [{frequency, {interval, 60 * 1000}}]),
+    _ = logi:warning_opt(State#state.logger, "unknown info: info=~W", [Info, ?MAX_WRITERS], [?WARNING_LOG_FREQUENCY]),
     {ok, State}.
 
 %% @hidden
@@ -60,18 +81,24 @@ code_change(_OldVsn, State, _Extra) ->
 %%------------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
 %%------------------------------------------------------------------------------------------------------------------------
--spec do_log(term(), #state{}) -> any().
-do_log({error, Gleader, {Pid, Format, Data}}, State) ->
-    logi:error_opt(State#state.logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
-do_log({warning, Gleader, {Pid, Format, Data}}, State) ->
-    logi:warning_opt(State#state.logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
-do_log({info, Gleader, {Pid, Format, Data}}, State) ->
-    logi:info_opt(State#state.logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
-do_log({error_report, Gleader, {Pid, Type, Report}}, State) ->
-    logi:error_opt(State#state.logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
-do_log({warning_report, Gleader, {Pid, Type, Report}}, State) ->
-    logi:warning_opt(State#state.logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
-do_log({info_report, Gleader, {Pid, Type, Report}}, State) ->
-    logi:info_opt(State#state.logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
-do_log(Event, State) ->
-    logi:verbose_opt(State#state.logger, "unknown call: event=~p", [Event], [{frequency, {interval, 3 * 60 * 1000}}]).
+-spec start_writer(term(), #state{}) -> ok.
+start_writer(Event, #state{logger = Logger}) ->
+    Pid = spawn(?MODULE, do_log, [Event, Logger]),
+    _ = erlang:send_after(?WRITE_TIMEOUT, self(), {?MODULE, timeout, Pid}),
+    ok.
+
+-spec do_log(term(), logi:logger()) -> any().
+do_log({error, Gleader, {Pid, Format, Data}}, Logger) ->
+    logi:error_opt(Logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
+do_log({warning_msg, Gleader, {Pid, Format, Data}}, Logger) ->
+    logi:warning_opt(Logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
+do_log({info_msg, Gleader, {Pid, Format, Data}}, Logger) ->
+    logi:info_opt(Logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
+do_log({error_report, Gleader, {Pid, Type, Report}}, Logger) ->
+    logi:error_opt(Logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
+do_log({warning_report, Gleader, {Pid, Type, Report}}, Logger) ->
+    logi:warning_opt(Logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
+do_log({info_report, Gleader, {Pid, Type, Report}}, Logger) ->
+    logi:info_opt(Logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
+do_log(Event, Logger) ->
+    logi:notice(Logger, "unknown call: event=~W", [Event, ?MAX_DEPTH]).
