@@ -12,8 +12,10 @@
 -export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2, code_change/3]).
 
 %%------------------------------------------------------------------------------------------------------------------------
-%% Records
+%% Macros & Records
 %%------------------------------------------------------------------------------------------------------------------------
+-define(MAX_DEPTH, 16).
+
 -record(state,
         {
           logger :: logi:logger()
@@ -61,10 +63,10 @@ do_log({warning, Gleader, {Pid, Format, Data}}, State) ->
 do_log({info, Gleader, {Pid, Format, Data}}, State) ->
     logi:info_opt(State#state.logger, Format, Data, [{headers, [{gleader, Gleader}, {sender, Pid}]}]);
 do_log({error_report, Gleader, {Pid, Type, Report}}, State) ->
-    logi:error_opt(State#state.logger, "~p", [Report], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
+    logi:error_opt(State#state.logger, "~P", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
 do_log({warning_report, Gleader, {Pid, Type, Report}}, State) ->
-    logi:warning_opt(State#state.logger, "~p", [Report], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
+    logi:warning_opt(State#state.logger, "~P", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
 do_log({info_report, Gleader, {Pid, Type, Report}}, State) ->
-    logi:info_opt(State#state.logger, "~p", [Report], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
+    logi:info_opt(State#state.logger, "~P", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
 do_log(Event, State) ->
     logi:verbose_opt(State#state.logger, "unknown call: event=~p", [Event], [{frequency, {interval, 3 * 60 * 1000}}]).
