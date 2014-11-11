@@ -15,6 +15,7 @@
 %% Macros & Records
 %%------------------------------------------------------------------------------------------------------------------------
 -define(MAX_DEPTH, 16).
+-define(MAX_QUEUE_LEN, 16).
 
 -record(state,
         {
@@ -31,7 +32,11 @@ init([Logger]) ->
 
 %% @hidden
 handle_event(Event, State) ->
-    _ = do_log(Event, State),
+    {_, Len} = erlang:process_info(self(), message_queue_len),
+    _ = case Len > ?MAX_QUEUE_LEN of
+            false -> do_log(Event, State);
+            true  -> logi:warning_opt("overload: queue_len=~p", [Len], [{frequency, {interval, 3 * 60 * 1000}}])
+        end,
     {ok, State}.
 
 %% @hidden
