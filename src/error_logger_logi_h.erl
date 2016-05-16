@@ -29,15 +29,20 @@
 -record(state,
         {
           logger       :: logi:logger(),
-          writers  = 0 :: non_neg_integer()
+          writers  = 0 :: non_neg_integer(),
+          omit_report_types = [] :: list()
         }).
 
 %%------------------------------------------------------------------------------------------------------------------------
 %% 'gen_event' Callback Functions
 %%------------------------------------------------------------------------------------------------------------------------
 %% @hidden
-init([Logger]) ->
-    State = #state{logger = Logger},
+init({Logger, OmitReportTypes}) ->
+    State =
+        #state{
+           logger = Logger,
+           omit_report_types = OmitReportTypes
+          },
     {ok, State}.
 
 %% @hidden
@@ -82,10 +87,14 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Functions
 %%------------------------------------------------------------------------------------------------------------------------
 -spec start_writer(term(), #state{}) -> ok.
-start_writer(Event, #state{logger = Logger}) ->
-    Pid = spawn(?MODULE, do_log, [Event, Logger]),
-    _ = erlang:send_after(?WRITE_TIMEOUT, self(), {?MODULE, timeout, Pid}),
-    ok.
+start_writer(Event, State = #state{logger = Logger}) ->
+    case is_omitted(Event, State) of
+        true  -> ok;
+        false ->
+            Pid = spawn(?MODULE, do_log, [Event, Logger]),
+            _ = erlang:send_after(?WRITE_TIMEOUT, self(), {?MODULE, timeout, Pid}),
+            ok
+    end.
 
 -spec do_log(term(), logi:logger()) -> any().
 do_log({error, Gleader, {Pid, Format, Data}}, Logger) ->
@@ -102,3 +111,13 @@ do_log({info_report, Gleader, {Pid, Type, Report}}, Logger) ->
     logi:info_opt(Logger, "~W", [Report, ?MAX_DEPTH], [{headers, [{gleader, Gleader}, {sender, Pid}, {type, Type}]}]);
 do_log(Event, Logger) ->
     logi:notice(Logger, "unknown call: event=~W", [Event, ?MAX_DEPTH]).
+
+-spec is_omitted(term(), #state{}) -> boolean().
+is_omitted({info_report, _, {_, Type, _}}, #state{omit_report_types = Types}) ->
+    lists:member(Type, Types);
+is_omitted({warning_report, _, {_, Type, _}}, #state{omit_report_types = Types}) ->
+    lists:member(Type, Types);
+is_omitted({error_report, _, {_, Type, _}}, #state{omit_report_types = Types}) ->
+    lists:member(Type, Types);
+is_omitted(_, _) ->
+    false.
