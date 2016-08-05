@@ -53,8 +53,7 @@ handle_event(Event, State) ->
             _ = logi:warning_opt("overload: queue_len=~w, workers=~w", [Len, State#state.writers], [?WARNING_LOG_FREQUENCY]),
             {ok, State};
         true ->
-            ok = start_writer(Event, State),
-            {ok, State#state{writers = State#state.writers + 1}}
+            {ok, start_writer(Event, State)}
     end.
 
 %% @hidden
@@ -86,14 +85,14 @@ code_change(_OldVsn, State, _Extra) ->
 %%------------------------------------------------------------------------------------------------------------------------
 %% Internal Functions
 %%------------------------------------------------------------------------------------------------------------------------
--spec start_writer(term(), #state{}) -> ok.
-start_writer(Event, State = #state{logger = Logger}) ->
+-spec start_writer(term(), #state{}) -> #state{}.
+start_writer(Event, State = #state{logger = Logger, writers = Writers}) ->
     case is_omitted(Event, State) of
-        true  -> ok;
+        true  -> State;
         false ->
             Pid = spawn(?MODULE, do_log, [Event, Logger]),
             _ = erlang:send_after(?WRITE_TIMEOUT, self(), {?MODULE, timeout, Pid}),
-            ok
+            State#state{writers = Writers + 1}
     end.
 
 -spec do_log(term(), logi:logger()) -> any().
