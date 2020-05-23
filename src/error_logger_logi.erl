@@ -49,7 +49,7 @@ install_opt(Options) ->
     _ = is_list(OmitReportTypes) orelse error(badarg, [Options]),
     case error_logger:add_report_handler(error_logger_logi_h, {Logger, OmitReportTypes}) of
         ok    -> ok;
-        Other -> exit({install_failed, Other}, [Logger])
+        Other -> exit({install_failed, Other, [Logger]})
     end.
 
 %% @equiv uninstall(logi:default_logger())
@@ -62,5 +62,5 @@ uninstall(Logger) ->
     case error_logger:delete_report_handler(error_logger_logi_h) of
         ok                        -> ok;
         {error, module_not_found} -> ok;
-        Other                     -> exit({uninstall_failed, Other}, [Logger])
+        Other                     -> exit({uninstall_failed, Other, [Logger]})
     end.
